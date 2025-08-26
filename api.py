@@ -1,18 +1,24 @@
 from flask import Flask, request, jsonify, send_file, render_template
 import re
 from io import BytesIO
-
-# nltk.download('stopwords')
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
 import matplotlib.pyplot as plt
 import pandas as pd
 import pickle
 import base64
+from flask_cors import CORS  # NEW
+
+# Initialize app
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes (can restrict later if needed)
+
+# Load once at startup (better performance)
+predictor = pickle.load(open(r"Models/model_xgb.pkl", "rb"))
+scaler = pickle.load(open(r"Models/scaler.pkl", "rb"))
+cv = pickle.load(open(r"Models/countVectorizer.pkl", "rb"))
 
 STOPWORDS = set(stopwords.words("english"))
-
-app = Flask(__name__)
 
 
 @app.route("/test", methods=["GET"])
@@ -27,14 +33,9 @@ def home():
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    # Select the predictor to be loaded from Models folder
-    predictor = pickle.load(open(r"Models/model_xgb.pkl", "rb"))
-    scaler = pickle.load(open(r"Models/scaler.pkl", "rb"))
-    cv = pickle.load(open(r"Models/countVectorizer.pkl", "rb"))
     try:
-        # Check if the request contains a file (for bulk prediction) or text input
+        # Bulk prediction from CSV file
         if "file" in request.files:
-            # Bulk prediction from CSV file
             file = request.files["file"]
             data = pd.read_csv(file)
 
@@ -46,24 +47,24 @@ def predict():
                 as_attachment=True,
                 download_name="Predictions.csv",
             )
-
             response.headers["X-Graph-Exists"] = "true"
-
             response.headers["X-Graph-Data"] = base64.b64encode(
                 graph.getbuffer()
             ).decode("ascii")
 
             return response
 
-        elif "text" in request.json:
-            # Single string prediction
+        # Single string prediction
+        elif request.is_json and "text" in request.json:
             text_input = request.json["text"]
             predicted_sentiment = single_prediction(predictor, scaler, cv, text_input)
-
             return jsonify({"prediction": predicted_sentiment})
 
+        else:
+            return jsonify({"error": "Invalid input. Provide 'file' or 'text'."}), 400
+
     except Exception as e:
-        return jsonify({"error": str(e)})
+        return jsonify({"error": str(e)}), 500
 
 
 def single_prediction(predictor, scaler, cv, text_input):
@@ -71,9 +72,10 @@ def single_prediction(predictor, scaler, cv, text_input):
     stemmer = PorterStemmer()
     review = re.sub("[^a-zA-Z]", " ", text_input)
     review = review.lower().split()
-    review = [stemmer.stem(word) for word in review if not word in STOPWORDS]
+    review = [stemmer.stem(word) for word in review if word not in STOPWORDS]
     review = " ".join(review)
     corpus.append(review)
+
     X_prediction = cv.transform(corpus).toarray()
     X_prediction_scl = scaler.transform(X_prediction)
     y_predictions = predictor.predict_proba(X_prediction_scl)
@@ -86,9 +88,9 @@ def bulk_prediction(predictor, scaler, cv, data):
     corpus = []
     stemmer = PorterStemmer()
     for i in range(0, data.shape[0]):
-        review = re.sub("[^a-zA-Z]", " ", data.iloc[i]["Sentence"])
+        review = re.sub("[^a-zA-Z]", " ", str(data.iloc[i]["Sentence"]))
         review = review.lower().split()
-        review = [stemmer.stem(word) for word in review if not word in STOPWORDS]
+        review = [stemmer.stem(word) for word in review if word not in STOPWORDS]
         review = " ".join(review)
         corpus.append(review)
 
@@ -100,12 +102,10 @@ def bulk_prediction(predictor, scaler, cv, data):
 
     data["Predicted sentiment"] = y_predictions
     predictions_csv = BytesIO()
-
     data.to_csv(predictions_csv, index=False)
     predictions_csv.seek(0)
 
     graph = get_distribution_graph(data)
-
     return predictions_csv, graph
 
 
@@ -132,15 +132,11 @@ def get_distribution_graph(data):
     graph = BytesIO()
     plt.savefig(graph, format="png")
     plt.close()
-
     return graph
 
 
 def sentiment_mapping(x):
-    if x == 1:
-        return "Positive"
-    else:
-        return "Negative"
+    return "Positive" if x == 1 else "Negative"
 
 
 if __name__ == "__main__":
