@@ -25,17 +25,3 @@ It supports **single text prediction** and **bulk predictions via CSV upload**.
 
 ---
 
-## 📂 Project Structure
-Sentiment-Analysis/
-│
-├── Models/ # Pre-trained ML models
-│ ├── model_xgb.pkl
-│ ├── scaler.pkl
-│ └── countVectorizer.pkl
-│
-├── templates/ # HTML templates
-│ └── landing.html
-│
-├── app.py # Flask application
-├── requirements.txt # Dependencies
-└── README.md # Project documentation
